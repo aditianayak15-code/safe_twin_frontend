@@ -1,0 +1,216 @@
+@import "tailwindcss";
+
+@theme {
+  --color-void: #05080d;
+  --color-panel: #0a1017;
+  --color-panel2: #0d141d;
+  --color-line: #1b2733;
+  --color-line2: #243444;
+  --color-ink: #e8f1f8;
+  --color-dim: #7d92a5;
+  --color-faint: #46586a;
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-crit: #f87171;
+  --color-accent: #38bdf8;
+  --color-accent2: #22d3ee;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+}
+
+html, body {
+  background: var(--color-void);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  overscroll-behavior: none;
+}
+
+#root { height: 100dvh; }
+
+::selection { background: rgba(56, 189, 248, 0.35); }
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: #243444; border-radius: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── industrial panel language ─────────────────────────────────────────── */
+@layer components {
+  .panel {
+    background: linear-gradient(180deg, rgba(13, 20, 29, 0.92), rgba(10, 16, 23, 0.88));
+    border: 1px solid var(--color-line);
+    backdrop-filter: blur(10px);
+  }
+  .panel-corner { position: relative; }
+  .panel-corner::before,
+  .panel-corner::after {
+    content: "";
+    position: absolute;
+    width: 10px; height: 10px;
+    border-color: var(--color-accent);
+    border-style: solid;
+    opacity: 0.55;
+  }
+  .panel-corner::before { top: -1px; left: -1px; border-width: 1px 0 0 1px; }
+  .panel-corner::after { bottom: -1px; right: -1px; border-width: 0 1px 1px 0; }
+
+  .hud-label {
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-faint);
+  }
+
+  .hud-btn {
+    border: 1px solid var(--color-line2);
+    background: rgba(13, 20, 29, 0.8);
+    color: var(--color-ink);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 8px 14px;
+    transition: all 0.18s ease;
+    cursor: pointer;
+  }
+  .hud-btn:hover { border-color: var(--color-accent); color: var(--color-accent2); background: rgba(56, 189, 248, 0.06); }
+  .hud-btn:disabled { opacity: 0.4; cursor: default; }
+  .hud-btn:disabled:hover { border-color: var(--color-line2); color: var(--color-ink); background: rgba(13, 20, 29, 0.8); }
+
+  .hud-btn-primary {
+    border: 1px solid rgba(56, 189, 248, 0.6);
+    background: linear-gradient(180deg, rgba(56, 189, 248, 0.16), rgba(56, 189, 248, 0.05));
+    color: var(--color-accent2);
+  }
+  .hud-btn-primary:hover {
+    border-color: var(--color-accent2);
+    background: linear-gradient(180deg, rgba(34, 211, 238, 0.25), rgba(34, 211, 238, 0.08));
+    color: #a5f3fc;
+    box-shadow: 0 0 24px rgba(34, 211, 238, 0.18);
+  }
+
+  .hud-btn-danger {
+    border: 1px solid rgba(248, 113, 113, 0.55);
+    background: linear-gradient(180deg, rgba(248, 113, 113, 0.14), rgba(248, 113, 113, 0.04));
+    color: #fca5a5;
+  }
+  .hud-btn-danger:hover { border-color: var(--color-crit); box-shadow: 0 0 24px rgba(248, 113, 113, 0.15); }
+
+  .sweep { position: relative; overflow: hidden; }
+  .sweep::after {
+    content: "";
+    position: absolute;
+    top: 0; bottom: 0; width: 30%;
+    background: linear-gradient(90deg, transparent, rgba(165, 243, 252, 0.14), transparent);
+    animation: sweep 3.2s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  .grid-bg {
+    background-image:
+      linear-gradient(rgba(36, 52, 68, 0.22) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(36, 52, 68, 0.22) 1px, transparent 1px);
+    background-size: 34px 34px;
+  }
+
+  .text-glow-ok { text-shadow: 0 0 12px rgba(52, 211, 153, 0.5); }
+  .text-glow-crit { text-shadow: 0 0 14px rgba(248, 113, 113, 0.55); }
+}
+
+/* ── keyframes + live indicators (kept unlayered so animation always applies) ── */
+@keyframes sweep {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(220%); }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px currentColor; }
+  50% { opacity: 0.45; box-shadow: 0 0 1px currentColor; }
+}
+@keyframes pulse-ring {
+  0% { transform: scale(0.6); opacity: 0.9; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+@keyframes blink-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+@keyframes ticker {
+  0% { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.pulse-dot {
+  width: 6px; height: 6px; border-radius: 9999px;
+  display: inline-block;
+  animation: pulse-dot 2.2s ease-in-out infinite;
+}
+.pulse-ring { animation: pulse-ring 1.8s ease-out infinite; }
+.blink-soft { animation: blink-soft 1.4s ease-in-out infinite; }
+.rise { animation: ticker 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+@keyframes drift-grid {
+  0% { background-position: 0 0, 0 0; }
+  100% { background-position: 34px 34px, 34px 34px; }
+}
+@keyframes glow-breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.95; }
+}
+
+/* ── industrial hall backdrop behind the 3D canvas ───────────────────────── */
+.twin-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  /* dark ceiling → lit wall band → darker floor, like a plant interior */
+  background: linear-gradient(
+    180deg,
+    #04070b 0%,
+    #060c13 26%,
+    #0a1520 52%,
+    #0d1b27 68%,
+    #081019 86%,
+    #05090f 100%
+  );
+}
+/* moving fine grid — reads as the marked factory floor */
+.twin-bg::before {
+  content: "";
+  position: absolute;
+  inset: -34px;
+  background-image:
+    linear-gradient(rgba(46, 72, 96, 0.16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46, 72, 96, 0.16) 1px, transparent 1px);
+  background-size: 34px 34px;
+  animation: drift-grid 14s linear infinite;
+  mask-image: radial-gradient(90% 78% at 50% 42%, #000 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(90% 78% at 50% 42%, #000 30%, transparent 100%);
+}
+/* structural wall seams — vertical I-beam columns along the back wall */
+.twin-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(34, 54, 74, 0.22) 0px,
+    rgba(34, 54, 74, 0.22) 2px,
+    transparent 2px,
+    transparent 110px
+  );
+  mask-image: linear-gradient(180deg, transparent 26%, rgba(0, 0, 0, 0.85) 58%, rgba(0, 0, 0, 0.35) 78%, transparent 94%);
+  -webkit-mask-image: linear-gradient(180deg, transparent 26%, rgba(0, 0, 0, 0.85) 58%, rgba(0, 0, 0, 0.35) 78%, transparent 94%);
+}
+
+/* corner vignette for cinematic depth */
+.twin-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(120% 90% at 50% 42%, transparent 55%, rgba(3, 6, 10, 0.55) 100%),
+    linear-gradient(180deg, rgba(4, 7, 11, 0.5), transparent 14%, transparent 86%, rgba(4, 7, 11, 0.6));
+}
+
+/* reduced motion: kill decorative animation, keep function */
+@media (prefers-reduced-motion: reduce) {
+  .sweep::after, .pulse-dot, .pulse-ring, .blink-soft, .rise { animation: none !important; }
+  .twin-bg::before { animation: none !important; }
+}
