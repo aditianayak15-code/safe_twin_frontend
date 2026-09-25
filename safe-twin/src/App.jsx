@@ -9,6 +9,8 @@ import RiskCards from './components/RiskCards.jsx'
 import MachinePanel from './components/MachinePanel.jsx'
 import Copilot from './components/Copilot.jsx'
 import TelemetryView from './views/TelemetryView.jsx'
+import SchedulingView from './views/SchedulingView.jsx'
+import ProductionAnalysisView from './views/ProductionAnalysisView.jsx'
 import CascadeView from './views/CascadeView.jsx'
 import ScenariosView from './views/ScenariosView.jsx'
 import SafetyView from './views/SafetyView.jsx'
@@ -175,6 +177,8 @@ export default function App() {
               className="absolute inset-0 z-20 p-4 pt-14 pb-1"
             >
               {view === 'telemetry' && <TelemetryView />}
+              {view === 'scheduling' && <SchedulingView />}
+              {view === 'production' && <ProductionAnalysisView />}
               {view === 'cascade' && <CascadeView />}
               {view === 'scenarios' && <ScenariosView />}
               {view === 'safety' && <SafetyView />}

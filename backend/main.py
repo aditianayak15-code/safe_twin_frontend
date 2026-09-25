@@ -507,3 +507,329 @@ def clear_speed(mid: str):
         raise HTTPException(404, "machine not found")
     STATE["speedOverride"].pop(mid, None)
     return {"ok": True, "machineId": mid}
+
+
+# ==================== SCHEDULING ====================
+
+class ScheduleJobIn(BaseModel):
+    machineId: str
+    job: str
+    start: str
+    end: str
+    expectedState: str = "RUNNING"
+    quantity: Optional[int] = None
+    priority: str = "normal"
+
+
+SCHEDULE_SEED = [
+    {"id": "s1", "machineId": "M-01", "job": "Infeed batch A14", "start": "06:00", "end": "14:00", "expectedState": "RUNNING", "quantity": 4200, "priority": "normal", "actualStart": "06:02", "actualEnd": None},
+    {"id": "s2", "machineId": "M-04", "job": "Line 2 drive - bearing watch", "start": "09:00", "end": "13:00", "expectedState": "RUNNING", "quantity": 1500, "priority": "critical", "actualStart": "09:25", "actualEnd": None},
+    {"id": "s3", "machineId": "M-07", "job": "Weld sequence W-77", "start": "10:00", "end": "15:00", "expectedState": "RUNNING", "quantity": 2600, "priority": "high", "actualStart": None, "actualEnd": None},
+    {"id": "s4", "machineId": "M-16", "job": "Exit cell packaging", "start": "08:00", "end": "12:00", "expectedState": "RUNNING", "quantity": 3000, "priority": "normal", "actualStart": "08:00", "actualEnd": "11:52"},
+    {"id": "s5", "machineId": "M-03", "job": "Compressor idle hold", "start": "13:00", "end": "17:00", "expectedState": "IDLE", "quantity": None, "priority": "low", "actualStart": None, "actualEnd": None},
+]
+schedules: list = [dict(s) for s in SCHEDULE_SEED]
+STATE["graceMinutes"] = 10
+
+
+def _hms_to_min(hms: str) -> int:
+    parts = hms.split(":")
+    return int(parts[0]) * 60 + int(parts[1])
+
+
+def _now_min() -> int:
+    return _hms_to_min(now_hms())
+
+
+def _machine_running(mid: str) -> bool:
+    ov = STATE["speedOverride"].get(mid)
+    if ov:
+        return ov["targetRpm"] > 100
+    m = MACHINE_BY_ID.get(mid)
+    return m is not None and m["state"] not in ("failure", "maintenance")
+
+
+def schedule_status(job: dict, now_min: int, running: bool) -> dict:
+    """Compare scheduled expectation with actual activity -> status + alert info."""
+    s_min = _hms_to_min(job["start"])
+    e_min = _hms_to_min(job["end"])
+    grace = STATE["graceMinutes"]
+    expected_run = job["expectedState"].upper() == "RUNNING"
+    actual_start = job.get("actualStart")
+    actual_end = job.get("actualEnd")
+
+    if actual_end:
+        return {"status": "COMPLETED", "severity": "ok", "delayMin": None, "message": None}
+    if now_min > e_min + grace:
+        if expected_run and running:
+            delay = now_min - e_min
+            msg = "Machine %s is still running %d min after scheduled stop (%s)." % (job["machineId"], delay, job["end"])
+            return {"status": "STOP DELAY", "severity": "warning", "delayMin": delay, "message": msg}
+        if expected_run and not actual_start:
+            msg = "Machine %s did not complete scheduled job '%s' (window %s-%s)." % (job["machineId"], job["job"], job["start"], job["end"])
+            return {"status": "MISSED", "severity": "critical", "delayMin": None, "message": msg}
+        return {"status": "COMPLETED", "severity": "ok", "delayMin": None, "message": None}
+    if now_min > e_min:
+        if expected_run and running:
+            delay = now_min - e_min
+            msg = "Machine %s is past scheduled stop (%s) and still running." % (job["machineId"], job["end"])
+            return {"status": "STOP DELAY", "severity": "warning", "delayMin": delay, "message": msg}
+        return {"status": "COMPLETED", "severity": "ok", "delayMin": None, "message": None}
+    if now_min >= s_min:
+        if expected_run:
+            if actual_start:
+                delay = _hms_to_min(actual_start) - s_min
+                if delay > grace:
+                    msg = "Machine %s started %d min late (scheduled %s, started %s)." % (job["machineId"], delay, job["start"], actual_start)
+                    return {"status": "RUNNING LATE", "severity": "warning", "delayMin": delay, "message": msg}
+                return {"status": "ON SCHEDULE", "severity": "ok", "delayMin": max(0, delay), "message": None}
+            if running:
+                job["actualStart"] = job["actualStart"] or now_hms()
+                return {"status": "ON SCHEDULE", "severity": "ok", "delayMin": 0, "message": None}
+            late = now_min - s_min
+            if late > grace:
+                msg = ("Machine %s has not started within the scheduled operating window "
+                       "(start %s, now %d min late, grace %d min).") % (job["machineId"], job["start"], late, grace)
+                return {"status": "START DELAY", "severity": "critical", "delayMin": late, "message": msg}
+            msg = "Machine %s has not started %d min after scheduled start (%s)." % (job["machineId"], late, job["start"])
+            return {"status": "START DELAY", "severity": "warning", "delayMin": late, "message": msg}
+        if running and job["expectedState"].upper() == "IDLE":
+            msg = "Machine %s was expected to be IDLE but is running." % job["machineId"]
+            return {"status": "STOP DELAY", "severity": "warning", "delayMin": now_min - s_min, "message": msg}
+        return {"status": "ON SCHEDULE", "severity": "ok", "delayMin": 0, "message": None}
+    return {"status": "UPCOMING", "severity": "info", "delayMin": None, "message": None}
+
+
+@app.get("/api/schedules")
+def get_schedules():
+    now_min = _now_min()
+    out = []
+    for job in schedules:
+        st = schedule_status(job, now_min, _machine_running(job["machineId"]))
+        merged = dict(job)
+        merged.update(st)
+        merged["graceMinutes"] = STATE["graceMinutes"]
+        out.append(merged)
+    return sorted(out, key=lambda j: j["start"])
+
+
+@app.post("/api/schedules")
+def add_schedule(body: ScheduleJobIn):
+    if body.machineId not in MACHINE_BY_ID:
+        raise HTTPException(404, "machine not found")
+    job = {
+        "id": "s%d" % (len(schedules) + 1), "machineId": body.machineId, "job": body.job,
+        "start": body.start, "end": body.end, "expectedState": body.expectedState.upper(),
+        "quantity": body.quantity, "priority": body.priority, "actualStart": None, "actualEnd": None,
+    }
+    schedules.append(job)
+    push_history("info", "Job scheduled", "%s: '%s' %s-%s (%s)." % (body.machineId, body.job, body.start, body.end, body.expectedState), body.machineId)
+    return {"ok": True, "job": job}
+
+
+@app.post("/api/schedules/{sid}/complete")
+def complete_schedule(sid: str):
+    for j in schedules:
+        if j["id"] == sid:
+            j["actualEnd"] = now_hms()
+            return {"ok": True, "job": j}
+    raise HTTPException(404, "schedule not found")
+
+
+@app.post("/api/schedules/grace/{minutes}")
+def set_grace(minutes: int):
+    STATE["graceMinutes"] = max(0, minutes)
+    return {"ok": True, "graceMinutes": STATE["graceMinutes"]}
+
+
+@app.get("/api/scheduling/alerts")
+def scheduling_alerts():
+    now_min = _now_min()
+    alerts = []
+    for job in schedules:
+        st = schedule_status(job, now_min, _machine_running(job["machineId"]))
+        if st["message"]:
+            if st["status"] == "START DELAY":
+                action = "Dispatch technician and verify power/interlocks"
+            elif st["status"] == "STOP DELAY":
+                action = "Verify operator handover and stop procedure"
+            elif st["status"] == "MISSED":
+                action = "Review job plan and reschedule"
+            else:
+                action = "Log delay and adjust schedule"
+            alerts.append({
+                "id": "sa-" + job["id"], "machineId": job["machineId"], "job": job["job"],
+                "scheduledStart": job["start"], "scheduledEnd": job["end"], "now": now_hms(),
+                "delayMin": st["delayMin"], "severity": st["severity"], "status": st["status"],
+                "message": st["message"], "recommendedAction": action,
+            })
+    order = {"critical": 0, "warning": 1, "info": 2}
+    return sorted(alerts, key=lambda a: (order.get(a["severity"], 3), -(a["delayMin"] or 0)))
+
+
+# ==================== PRODUCTION ANALYSIS ====================
+
+class ProductionAnalysisIn(BaseModel):
+    quantity: int
+    startTime: str
+    deadline: str
+    productType: str = "units"
+    machineIds: Optional[list] = None
+    speedOverrides: Optional[dict] = None
+    tempOverride: Optional[dict] = None
+
+
+PRODUCTION_PARAMS = {
+    "conveyor":   {"unitsPerHour": 900, "efficiency": 0.92, "maxSafeTempC": 85, "cycleMin": 0.07},
+    "pump":       {"unitsPerHour": 600, "efficiency": 0.88, "maxSafeTempC": 80, "cycleMin": 0.10},
+    "compressor": {"unitsPerHour": 450, "efficiency": 0.85, "maxSafeTempC": 95, "cycleMin": 0.13},
+    "motor":      {"unitsPerHour": 750, "efficiency": 0.90, "maxSafeTempC": 90, "cycleMin": 0.08},
+    "robot":      {"unitsPerHour": 380, "efficiency": 0.86, "maxSafeTempC": 70, "cycleMin": 0.16},
+    "cell":       {"unitsPerHour": 1200, "efficiency": 0.94, "maxSafeTempC": 60, "cycleMin": 0.05},
+}
+params_store: dict = {}
+
+
+@app.get("/api/production/params")
+def get_params():
+    return {"defaults": PRODUCTION_PARAMS, "overrides": params_store}
+
+
+@app.post("/api/production/params")
+def set_params(body: dict):
+    kind = body.get("kind")
+    if kind not in PRODUCTION_PARAMS:
+        raise HTTPException(404, "unknown kind")
+    merged = dict(PRODUCTION_PARAMS[kind])
+    for k, v in body.items():
+        if k != "kind":
+            merged[k] = v
+    params_store[kind] = merged
+    return {"ok": True, "kind": kind, "params": merged}
+
+
+def _machine_availability(mid: str) -> dict:
+    m = MACHINE_BY_ID[mid]
+    r = risk_from_dataset(m)
+    avail = 1.0
+    avail -= max(0, (r["risk"] - 20)) / 100.0 * 0.5
+    if m["state"] == "maintenance":
+        avail -= 0.35
+    if STATE["speedOverride"].get(mid):
+        avail -= 0.15
+    now_min = _now_min()
+    overlap = 0
+    for j in schedules:
+        if j["machineId"] == mid and _hms_to_min(j["end"]) > now_min:
+            overlap += 1
+    avail -= overlap * 0.08
+    avail = max(0.15, min(1.0, avail))
+    return {"availability": round(avail, 2), "risk": r["risk"], "state": m["state"]}
+
+
+@app.post("/api/production/analyze")
+def production_analyze(body: ProductionAnalysisIn):
+    ids = body.machineIds or [m["id"] for m in MACHINES]
+    unknown = [i for i in ids if i not in MACHINE_BY_ID]
+    if unknown:
+        raise HTTPException(404, "unknown machines: %s" % unknown)
+    window_min = _hms_to_min(body.deadline) - _hms_to_min(body.startTime)
+    if window_min <= 0:
+        raise HTTPException(422, "deadline must be after start time")
+    hours = window_min / 60.0
+
+    machines_out = []
+    total_capacity = 0.0
+    constraints = []
+    unsafe = []
+    for mid in ids:
+        m = MACHINE_BY_ID[mid]
+        kp = dict(PRODUCTION_PARAMS[m["kind"]])
+        if m["kind"] in params_store:
+            for k, v in params_store[m["kind"]].items():
+                kp[k] = v
+        uph = kp["unitsPerHour"]
+        if body.speedOverrides and mid in body.speedOverrides:
+            uph = body.speedOverrides[mid]
+        temp = None
+        if body.tempOverride and mid in body.tempOverride:
+            temp = body.tempOverride[mid]
+        nominal_temp = 82 if m["kind"] == "motor" else 62
+        if temp is not None and temp > kp["maxSafeTempC"]:
+            unsafe.append({"machineId": mid, "requestedTempC": temp, "maxSafeTempC": kp["maxSafeTempC"]})
+            temp = kp["maxSafeTempC"]
+        eff = kp["efficiency"]
+        av = _machine_availability(mid)
+        thermal_derated = temp is not None and temp > nominal_temp + 8
+        if thermal_derated:
+            eff = eff * 0.9
+        capacity = uph * hours * av["availability"] * eff
+        total_capacity += capacity
+        machines_out.append({
+            "machineId": mid, "kind": m["kind"], "unitsPerHour": round(uph, 1),
+            "efficiency": round(eff, 2), "availability": av["availability"], "risk": av["risk"],
+            "capacityUnits": round(capacity), "maxSafeTempC": kp["maxSafeTempC"],
+            "tempRequestedC": temp, "thermalDerated": bool(thermal_derated),
+        })
+
+    shortfall = max(0, body.quantity - total_capacity)
+    utilization = round(min(1.0, body.quantity / max(total_capacity, 1)) * 100)
+    if unsafe:
+        constraints.append("Unsafe temperature request clamped to configured safe limit")
+    if shortfall > 0:
+        ranked = sorted(machines_out, key=lambda x: x["capacityUnits"])
+        for x in ranked[:2]:
+            constraints.append("%s capacity (%d units)" % (x["machineId"], x["capacityUnits"]))
+        if any(x["risk"] > 50 for x in machines_out):
+            constraints.append("High failure risk on contributing machines")
+        if schedules:
+            constraints.append("%d existing scheduled jobs reduce availability" % len(schedules))
+    eff_rate = total_capacity / hours if hours else 0
+    completion_min = int(body.quantity / eff_rate * 60) if eff_rate > 0 else None
+    est_completion = None
+    if completion_min is not None:
+        base = _hms_to_min(body.startTime) + completion_min
+        est_completion = "%02d:%02d" % (base // 60 % 24, base % 60)
+
+    if shortfall <= 0:
+        verdict, severity = "CAPACITY AVAILABLE", "ok"
+        if utilization > 92:
+            verdict, severity = "CAPACITY AVAILABLE WITH ADJUSTMENTS", "warning"
+            constraints.append("Utilization above 92% - no downtime buffer; raise efficiency or add machines")
+    elif shortfall / float(body.quantity) <= 0.3:
+        verdict, severity = "CAPACITY AVAILABLE WITH ADJUSTMENTS", "warning"
+    else:
+        verdict, severity = "CAPACITY INSUFFICIENT", "critical"
+
+    alternatives = []
+    if verdict != "CAPACITY AVAILABLE":
+        extra_hours = (body.quantity / max(total_capacity, 1) - 1) * hours
+        alternatives.append({
+            "option": "Extend production time",
+            "detail": "approx %d min total (extra approx %d min)" % (int(extra_hours * 60) + window_min, int(extra_hours * 60)),
+        })
+        idle = [m["id"] for m in MACHINES if m["id"] not in ids and _machine_running(m["id"])]
+        if idle:
+            alternatives.append({"option": "Add available machines", "detail": ", ".join(idle[:4])})
+        top = sorted(machines_out, key=lambda y: -y["unitsPerHour"])[:2]
+        for x in top:
+            alternatives.append({
+                "option": "Raise %s rate within safe limits" % x["machineId"],
+                "detail": "%s -> approx %s units/hour (+15%%)" % (x["unitsPerHour"], round(x["unitsPerHour"] * 1.15)),
+            })
+        alternatives.append({"option": "Split production across machines", "detail": "Balance the order over all compatible assets"})
+        alternatives.append({"option": "Reschedule lower-priority jobs", "detail": "Free availability on loaded machines"})
+
+    push_history("info", "Production analysis run", "Order %d %s by %s: %s." % (body.quantity, body.productType, body.deadline, verdict))
+
+    return {
+        "verdict": verdict, "severity": severity,
+        "requiredQuantity": body.quantity, "expectedQuantity": round(total_capacity),
+        "windowHours": round(hours, 2), "estCompletion": est_completion,
+        "capacityUnits": round(total_capacity), "utilizationPct": utilization,
+        "remainingCapacity": round(max(0, total_capacity - body.quantity)),
+        "shortfall": round(shortfall),
+        "machines": machines_out, "constraints": constraints[:5],
+        "alternatives": alternatives if verdict != "CAPACITY AVAILABLE" else [],
+        "unsafeConditions": unsafe,
+    }

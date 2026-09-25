@@ -16,7 +16,7 @@ import { seededRandom } from '../utils/math.js'
 
 // ── config ────────────────────────────────────────────────────────────────
 export const USE_MOCK = false // real backend is the default; fallback is automatic
-const API_BASE = '/api'
+const API_BASE = import.meta.env?.VITE_API_BASE ?? '/api'
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms))
 

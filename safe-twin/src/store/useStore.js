@@ -20,7 +20,7 @@ const state = {
   tick: 0,
 
   // UI
-  view: 'twin',                  // twin | telemetry | cascade | scenarios | safety | history
+  view: 'twin',                  // twin | telemetry | cascade | scenarios | safety | history | scheduling | production
   selectedId: null,              // machine details panel
   hoverId: null,
   focusId: null,                 // 3D camera focus target

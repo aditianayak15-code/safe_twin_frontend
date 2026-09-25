@@ -1,13 +1,15 @@
 /** BottomNav — primary view navigation, industrial HUD style. */
 
-import { Activity, Waves, GitBranch, GitCompareArrows, ShieldCheck, History } from 'lucide-react'
+import { Activity, Waves, GitBranch, GitCompareArrows, ShieldCheck, History, CalendarClock, Factory } from 'lucide-react'
 import { useStore, navigate } from '../store/useStore.js'
 
 const ITEMS = [
   { id: 'telemetry', label: 'Telemetry', icon: Waves },
+  { id: 'scheduling', label: 'Scheduling', icon: CalendarClock },
   { id: 'cascade', label: 'Cascade', icon: GitBranch },
   { id: 'scenarios', label: 'Scenarios', icon: GitCompareArrows },
   { id: 'safety', label: 'Safety', icon: ShieldCheck },
+  { id: 'production', label: 'Production', icon: Factory },
   { id: 'history', label: 'History', icon: History },
 ]
 
